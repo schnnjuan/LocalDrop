@@ -10,18 +10,6 @@
 
 #define SERVICE_TYPE "_localdrop._tcp"
 
-// Estrutura para representar um dispositivo descoberto
-typedef struct {
-    char name[256];
-    char ip[46];  // IPv4 ou IPv6
-    uint16_t port;
-    int active;   // 1 se ativo, 0 se offline
-} Device;
-
-// Lista de dispositivos descobertos (máximo 50)
-extern Device discovered_devices[50];
-extern int device_count;
-
 // Funções públicas
 int discovery_init(const char *device_name, uint16_t port);
 void discovery_cleanup();

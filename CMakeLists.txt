@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 11)
 # Procurar as bibliotecas
 find_package(PkgConfig REQUIRED)
 find_package(CURL REQUIRED)
+find_package(Threads REQUIRED)
 pkg_check_modules(AVAHI REQUIRED avahi-client)
 pkg_check_modules(MHD REQUIRED libmicrohttpd)
 pkg_check_modules(QRENCODE REQUIRED libqrencode)
@@ -16,13 +17,17 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Arquivos fonte
 set(SOURCES
+    src/json_utils.c
     src/main.c
+    src/peer_registry.c
     src/discovery.c
     src/transfer.c
+    src/server.c
+    src/ui.c
 )
 
 # Criar o executável
 add_executable(localdrop ${SOURCES})
 
 # Linkar as bibliotecas
-target_link_libraries(localdrop ${AVAHI_LIBRARIES} ${MHD_LIBRARIES} ${QRENCODE_LIBRARIES} ${CURL_LIBRARIES})
+target_link_libraries(localdrop ${AVAHI_LIBRARIES} ${MHD_LIBRARIES} ${QRENCODE_LIBRARIES} ${CURL_LIBRARIES} Threads::Threads)
