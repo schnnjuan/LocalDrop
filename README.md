@@ -1,84 +1,127 @@
 ![LocalDrop Banner](./assets/LocalDrop.png)
 
-# 📡 LocalDrop
+# LocalDrop
 
-> Ferramenta de transferência de arquivos leve, open-source e voltada para rede local, inspirada no AirDrop.
+[![CI](https://github.com/schnnjuan/LocalDrop/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/schnnjuan/LocalDrop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-O LocalDrop descobre dispositivos próximos na mesma rede e permite que você envie arquivos de forma segura através de uma interface simples ou via CLI rápida. Construído com um núcleo em C para máxima velocidade e portabilidade, foi projetado para funcionar offline e com foco total em privacidade.
+LocalDrop is a LAN file sharing service written in C. It combines mDNS discovery, a local web UI, short-lived local authentication, peer pairing, and an asynchronous transfer queue to move files between devices on the same network without relying on cloud infrastructure.
 
-## ✨ Funcionalidades
+The project is Linux-first today and uses `libmicrohttpd`, `libcurl`, `Avahi`, and `OpenSSL`. The current web UI copy is Portuguese-first; documentation and contribution workflows are now organized for a wider open source audience.
 
-- **Configuração Zero**: Descoberta automática de dispositivos usando mDNS (Avahi).
-- **Interface Web**: Interface simples acessível pelo navegador para dispositivos móveis e desktop.
-- **Cross-Platform**: Motor principal escrito em C para alto desempenho.
-- **Pareamento via QR Code**: Conexão instantânea para celulares escaneando o QR code gerado no terminal.
-- **Privacidade em Primeiro Lugar**: Os arquivos permanecem na sua rede local. Sem nuvem, sem rastreamento.
-- **Rápido**: Transferências em alta velocidade limitadas apenas pelo seu hardware de rede.
+## Status
 
-## 🛠 Pré-requisitos
+LocalDrop is in active early-stage development.
 
-Para buildar e rodar o LocalDrop, você precisará das seguintes bibliotecas instaladas:
+What works today:
 
-- **libmicrohttpd**: Para o servidor web interno.
-- **libqrencode**: Para gerar QR codes no terminal.
-- **avahi-client & avahi-common**: Para a descoberta mDNS.
-- **OpenSSL**: Para futuras transferências criptografadas.
+- Device discovery over mDNS/Avahi
+- Browser-based local UI served by the binary itself
+- Local admin unlock flow with session tokens
+- Pairing flow with short-lived pairing codes and peer tokens
+- Protected uploads to the current node
+- Queued remote transfers to discovered and paired peers
+- CI with hardening plus ASan, UBSan, and TSan coverage
 
-No Ubuntu/Debian:
+Current limitations:
+
+- No TLS transport yet
+- No resumable transfers
+- Linux-oriented dependency and discovery stack
+- UI and terminal output are still focused on a single-node local workflow
+
+## Quick Start
+
+### Dependencies
+
+Ubuntu/Debian:
+
 ```bash
-sudo apt update
-sudo apt install libmicrohttpd-dev libqrencode-dev libavahi-client-dev libavahi-common-dev libssl-dev cmake build-essential
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential \
+  cmake \
+  curl \
+  libcurl4-openssl-dev \
+  libavahi-client-dev \
+  libavahi-common-dev \
+  libmicrohttpd-dev \
+  libqrencode-dev \
+  libssl-dev \
+  pkg-config
 ```
 
-## 🚀 Como Começar
+### Build
 
-### Compilando do Código Fonte
-
-1. Clone o repositório:
-   ```bash
-   git clone https://github.com/schnnjuan/LocalDrop.git
-   cd LocalDrop
-   ```
-
-2. Crie um diretório de build e compile:
-   ```bash
-   mkdir build && cd build
-   cmake ..
-   make
-   ```
-
-### Executando
-
-Inicie o servidor:
 ```bash
-./localdrop
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --parallel
 ```
 
-Ao iniciar, o LocalDrop irá:
-1. Se anunciar na rede local.
-2. Gerar um QR code no seu terminal.
-3. Iniciar um servidor web na porta `8080`.
+### Run
 
-Acesse a interface escaneando o QR code com seu celular ou abrindo a URL exibida no seu navegador.
+```bash
+./build/localdrop
+```
 
-## 🏗 Arquitetura
+At startup the binary:
 
-O LocalDrop é estruturado para simplicidade e performance:
+1. Detects a local IPv4 address
+2. Prints a QR code and local URL
+3. Prints a 6-digit local admin code
+4. Starts mDNS discovery
+5. Serves the web UI on port `8080`
 
-- **`src/main.c`**: Ponto de entrada e gerenciamento do servidor HTTP.
-- **`src/discovery.c`**: Implementação mDNS usando Avahi.
-- **`src/server.c`**: Processamento de requisições e roteamento de arquivos.
-- **`src/transfer.c`**: Lógica central para envio e recebimento de arquivos.
-- **`src/ui.c`**: Interface de terminal e relatórios de status.
+## User Flow
 
-## 📝 Licença
+1. Start LocalDrop on the receiver.
+2. Open the local web UI from the printed URL or QR code.
+3. Unlock the UI with the admin code printed in the terminal.
+4. Generate a pairing code on the receiver.
+5. Use that pairing code from the sender to pair the peer.
+6. Send a file from the sender UI to a discovered and paired peer.
+7. Track transfer progress from the transfer queue panel.
 
-Distribuído sob a licença MIT. Veja `LICENSE` para mais informações.
+Received files are committed into `downloads/`. Outgoing files are staged in `staging/` and cleaned up after completion or failure.
 
-## 🤝 Agradecimentos
+## Repository Guide
 
-- Inspirado pelo AirDrop da Apple.
-- Construído com [libmicrohttpd](https://www.gnu.org/software/libmicrohttpd/) e [Avahi](https://avahi.org/).
+- [docs/README.md](./docs/README.md): documentation index
+- [docs/wiki/Home.md](./docs/wiki/Home.md): project overview
+- [docs/wiki/Architecture.md](./docs/wiki/Architecture.md): runtime architecture and module map
+- [docs/wiki/API.md](./docs/wiki/API.md): HTTP routes, headers, and auth requirements
+- [docs/wiki/Development.md](./docs/wiki/Development.md): build, test, and local development workflow
+- [docs/wiki/Roadmap.md](./docs/wiki/Roadmap.md): next milestones and contribution opportunities
 
----
-*Personagem inspirada na gata da minha namorada* 🐱
+## Community
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- [SECURITY.md](./SECURITY.md)
+- [SUPPORT.md](./SUPPORT.md)
+
+## Testing
+
+Run the default test suite:
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+Useful local variants:
+
+```bash
+cmake -S . -B build-asan -DBUILD_TESTING=ON -DLOCALDROP_ENABLE_HARDENING=OFF -DLOCALDROP_ENABLE_ASAN=ON
+cmake --build build-asan --parallel
+ctest --test-dir build-asan --output-on-failure
+```
+
+```bash
+cmake -S . -B build-tsan -DBUILD_TESTING=ON -DLOCALDROP_ENABLE_HARDENING=OFF -DLOCALDROP_ENABLE_TSAN=ON
+cmake --build build-tsan --parallel
+ctest --test-dir build-tsan --output-on-failure -L unit
+```
+
+## License
+
+LocalDrop is released under the [MIT License](./LICENSE).
