@@ -1,16 +1,14 @@
 #include "discovery.h"
+#include "peer_registry.h"
+
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-
-// Variáveis globais
-Device discovered_devices[50];
-int device_count = 0;
 
 static AvahiSimplePoll *simple_poll = NULL;
 static AvahiClient *client = NULL;
 static AvahiServiceBrowser *browser = NULL;
 static AvahiEntryGroup *group = NULL;
+static char local_device_name[256] = {0};
 
 // Callback quando resolve os detalhes de um dispositivo
 static void resolve_callback(
@@ -27,30 +25,24 @@ static void resolve_callback(
     AvahiStringList *txt,
     AvahiLookupResultFlags flags,
     void* userdata) {
-    
+    (void)interface;
+    (void)protocol;
+    (void)type;
+    (void)domain;
+    (void)host_name;
+    (void)txt;
+    (void)flags;
+    (void)userdata;
+
     if (event == AVAHI_RESOLVER_FOUND) {
         char addr[AVAHI_ADDRESS_STR_MAX];
-        avahi_address_snprint(addr, sizeof(addr), address);
-        
-        // Verificar se já existe na lista
-        int found = 0;
-        for (int i = 0; i < device_count; i++) {
-            if (strcmp(discovered_devices[i].ip, addr) == 0) {
-                found = 1;
-                discovered_devices[i].active = 1;
-                break;
+        if (address) {
+            avahi_address_snprint(addr, sizeof(addr), address);
+            if (peer_registry_add_or_update(name, addr, port) == 0) {
+                printf("✅ Dispositivo descoberto: %s (%s:%u)\n", name, addr, (unsigned int)port);
+            } else {
+                printf("❌ Limite de dispositivos atingido ou registro indisponivel\n");
             }
-        }
-        
-        // Adicionar novo dispositivo
-        if (!found && device_count < 50) {
-            strncpy(discovered_devices[device_count].name, name, 255);
-            strncpy(discovered_devices[device_count].ip, addr, 45);
-            discovered_devices[device_count].port = port;
-            discovered_devices[device_count].active = 1;
-            
-            printf("✅ Dispositivo descoberto: %s (%s:%d)\n", name, addr, port);
-            device_count++;
         }
     }
     
@@ -68,26 +60,38 @@ static void browse_callback(
     const char *domain,
     AvahiLookupResultFlags flags,
     void* userdata) {
-    
-    AvahiClient *client = userdata;
+    AvahiClient *avahi_client = userdata;
+    (void)b;
+    (void)flags;
+
+    if ((event == AVAHI_BROWSER_NEW || event == AVAHI_BROWSER_REMOVE) &&
+        name &&
+        local_device_name[0] != '\0' &&
+        strcmp(name, local_device_name) == 0) {
+        return;
+    }
     
     if (event == AVAHI_BROWSER_NEW) {
-        avahi_service_resolver_new(client, interface, protocol, name, type, domain,
-                                   AVAHI_PROTO_UNSPEC, 0, resolve_callback, client);
-    } else if (event == AVAHI_BROWSER_REMOVE) {
-        // Marcar como inativo
-        for (int i = 0; i < device_count; i++) {
-            if (strcmp(discovered_devices[i].name, name) == 0) {
-                discovered_devices[i].active = 0;
-                printf("❌ Dispositivo saiu: %s\n", name);
-                break;
-            }
+        if (!name) {
+            return;
         }
+        avahi_service_resolver_new(avahi_client, interface, protocol, name, type, domain,
+                                   AVAHI_PROTO_UNSPEC, 0, resolve_callback, avahi_client);
+    } else if (event == AVAHI_BROWSER_REMOVE) {
+        if (!name) {
+            return;
+        }
+        if (peer_registry_mark_inactive(name) == 0) {
+            printf("❌ Dispositivo saiu: %s\n", name);
+        }
+    } else if (event == AVAHI_BROWSER_FAILURE) {
+        printf("❌ Falha no browser Avahi\n");
     }
 }
 
 // Callback para criar o grupo de entrada (anúncio)
 static void entry_group_callback(AvahiEntryGroup *g, AvahiEntryGroupState state, void *userdata) {
+    (void)userdata;
     group = g;
     
     if (state == AVAHI_ENTRY_GROUP_ESTABLISHED) {
@@ -99,6 +103,8 @@ static void entry_group_callback(AvahiEntryGroup *g, AvahiEntryGroupState state,
 
 // Callback do cliente Avahi
 static void client_callback(AvahiClient *c, AvahiClientState state, void *userdata) {
+    (void)c;
+    (void)userdata;
     if (state == AVAHI_CLIENT_FAILURE) {
         printf("❌ Falha no cliente Avahi\n");
     }
@@ -107,6 +113,8 @@ static void client_callback(AvahiClient *c, AvahiClientState state, void *userda
 // Inicializar descoberta e anúncio
 int discovery_init(const char *device_name, uint16_t port) {
     int error;
+
+    snprintf(local_device_name, sizeof(local_device_name), "%s", device_name);
     
     // Criar poll
     simple_poll = avahi_simple_poll_new();
