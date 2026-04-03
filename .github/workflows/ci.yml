@@ -27,7 +27,7 @@ jobs:
     name: ${{ matrix.name }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -36,6 +36,7 @@ jobs:
             build-essential \
             cmake \
             curl \
+            libcurl4-openssl-dev \
             libavahi-client-dev \
             libavahi-common-dev \
             libmicrohttpd-dev \
