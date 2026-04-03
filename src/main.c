@@ -13,7 +13,9 @@
 #include "discovery.h"
 #include "peer_registry.h"
 #include "server.h"
+#include "storage.h"
 #include "transfer.h"
+#include "transfer_queue.h"
 
 #define PORT 8080
 
@@ -118,8 +120,27 @@ int main(void) {
         return 1;
     }
 
+    if (storage_init() != 0) {
+        printf("❌ Erro ao inicializar armazenamento local\n");
+        auth_cleanup();
+        transfer_global_cleanup();
+        peer_registry_cleanup();
+        return 1;
+    }
+
+    if (transfer_queue_init() != 0) {
+        printf("❌ Erro ao inicializar fila de transferencias\n");
+        storage_cleanup();
+        auth_cleanup();
+        transfer_global_cleanup();
+        peer_registry_cleanup();
+        return 1;
+    }
+
     if (!ip) {
         printf("❌ Não foi possível obter o IP local\n");
+        transfer_queue_shutdown();
+        storage_cleanup();
         auth_cleanup();
         transfer_global_cleanup();
         peer_registry_cleanup();
@@ -150,6 +171,8 @@ int main(void) {
         if (discovery_enabled) {
             discovery_cleanup();
         }
+        transfer_queue_shutdown();
+        storage_cleanup();
         auth_cleanup();
         transfer_global_cleanup();
         peer_registry_cleanup();
@@ -171,6 +194,8 @@ int main(void) {
     if (discovery_enabled) {
         discovery_cleanup();
     }
+    transfer_queue_shutdown();
+    storage_cleanup();
     auth_cleanup();
     transfer_global_cleanup();
     peer_registry_cleanup();

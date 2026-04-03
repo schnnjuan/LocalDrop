@@ -17,17 +17,19 @@ include_directories(${AVAHI_INCLUDE_DIRS} ${MHD_INCLUDE_DIRS} ${QRENCODE_INCLUDE
 include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Arquivos fonte
-set(SOURCES
-    src/auth.c
-    src/crypto.c
-    src/json_utils.c
-    src/main.c
-    src/peer_registry.c
-    src/discovery.c
-    src/transfer.c
-    src/server.c
-    src/ui.c
-)
+	set(SOURCES
+	    src/auth.c
+	    src/crypto.c
+	    src/json_utils.c
+	    src/main.c
+	    src/peer_registry.c
+	    src/discovery.c
+	    src/server.c
+	    src/storage.c
+	    src/transfer.c
+	    src/transfer_queue.c
+	    src/ui.c
+	)
 
 # Criar o executável
 add_executable(localdrop ${SOURCES})

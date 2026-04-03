@@ -12,6 +12,7 @@ struct upload_status {
     size_t total_bytes;
     size_t uploaded_bytes;
     progress_callback callback;
+    void *user_data;
 };
 
 struct response_buffer {
@@ -31,7 +32,7 @@ static int progress_func(void *ptr, curl_off_t total_to_download, curl_off_t dow
 
     if (status->callback && total_to_upload > 0 && uploaded >= 0) {
         status->uploaded_bytes = (size_t)uploaded;
-        status->callback((size_t)uploaded, (size_t)total_to_upload);
+        status->callback((size_t)uploaded, (size_t)total_to_upload, status->user_data);
     }
 
     return 0;
@@ -99,6 +100,12 @@ static size_t write_response(void *contents, size_t size, size_t nmemb, void *us
     return total;
 }
 
+static size_t discard_response(void *contents, size_t size, size_t nmemb, void *userdata) {
+    (void)contents;
+    (void)userdata;
+    return size * nmemb;
+}
+
 static int extract_json_string_field(const char *json, const char *field, char *dest, size_t dest_size) {
     char pattern[64];
     const char *start;
@@ -154,7 +161,7 @@ static int extract_json_long_field(const char *json, const char *field, long *va
 
 // Enviar arquivo via HTTP POST
 int transfer_send_file(const char *filepath, const char *dest_ip, int dest_port,
-                       const char *pair_token, progress_callback callback) {
+                       const char *pair_token, progress_callback callback, void *user_data) {
     CURL *curl;
     CURLcode res;
     curl_mime *mime = NULL;
@@ -181,6 +188,7 @@ int transfer_send_file(const char *filepath, const char *dest_ip, int dest_port,
     fclose(f);
 
     status.callback = callback;
+    status.user_data = user_data;
 
     printf("📤 Enviando %s (%zu bytes) para %s:%d\n",
            filepath, status.total_bytes, dest_ip, dest_port);
@@ -230,6 +238,7 @@ int transfer_send_file(const char *filepath, const char *dest_ip, int dest_port,
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, discard_response);
 
     res = curl_easy_perform(curl);
     if (res != CURLE_OK) {

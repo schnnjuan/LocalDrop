@@ -3,7 +3,9 @@
 #include "auth.h"
 #include "json_utils.h"
 #include "peer_registry.h"
+#include "storage.h"
 #include "transfer.h"
+#include "transfer_queue.h"
 #include "ui.h"
 
 #include <arpa/inet.h>
@@ -19,15 +21,14 @@
 #include <time.h>
 #include <unistd.h>
 
-#define DOWNLOADS_DIR "downloads"
 #define MAX_FILE_SIZE (1024 * 1024 * 100)
 #define UI_TOKEN_HEADER "X-LocalDrop-UI-Token"
 #define PAIR_TOKEN_HEADER "X-LocalDrop-Pair-Token"
 
 struct connection_info {
     struct MHD_PostProcessor *postprocessor;
-    FILE *fp;
-    char filename[256];
+    UploadStage upload_stage;
+    char filename[512];
     char target_ip[64];
     char target_port[16];
     char target_name[256];
@@ -36,7 +37,6 @@ struct connection_info {
     char peer_name[256];
     char peer_port[16];
     char client_ip[46];
-    size_t bytes_received;
     int upload_in_progress;
     int file_saved;
     int response_status;
@@ -46,14 +46,6 @@ struct connection_info {
 };
 
 static int server_port = 0;
-
-static void ensure_downloads_dir(void) {
-    struct stat st = {0};
-
-    if (stat(DOWNLOADS_DIR, &st) == -1) {
-        mkdir(DOWNLOADS_DIR, 0700);
-    }
-}
 
 static void set_error(struct connection_info *con_info, int status, const char *message) {
     if (!con_info) {
@@ -78,45 +70,6 @@ static void copy_form_value(char *dest, size_t dest_size, const char *data, uint
 
     memcpy(dest + off, data, copy_size);
     dest[off + copy_size] = '\0';
-}
-
-static void sanitize_filename(const char *filename, char *dest, size_t dest_size) {
-    const char *base;
-    size_t write_index = 0;
-
-    if (!dest || dest_size == 0) {
-        return;
-    }
-
-    dest[0] = '\0';
-    if (!filename || filename[0] == '\0') {
-        snprintf(dest, dest_size, "upload.bin");
-        return;
-    }
-
-    base = strrchr(filename, '/');
-    if (!base) {
-        base = strrchr(filename, '\\');
-    }
-    base = base ? base + 1 : filename;
-
-    for (size_t index = 0; base[index] != '\0' && write_index + 1 < dest_size; index++) {
-        char value = base[index];
-
-        if ((value >= 'a' && value <= 'z') ||
-            (value >= 'A' && value <= 'Z') ||
-            (value >= '0' && value <= '9') ||
-            value == '.' || value == '_' || value == '-') {
-            dest[write_index++] = value;
-        } else {
-            dest[write_index++] = '_';
-        }
-    }
-
-    dest[write_index] = '\0';
-    if (dest[0] == '\0') {
-        snprintf(dest, dest_size, "upload.bin");
-    }
 }
 
 static int get_client_ip(struct MHD_Connection *connection, char *dest, size_t dest_size) {
@@ -168,31 +121,31 @@ static int validate_ip_address(const char *value) {
     return -1;
 }
 
-static int finalize_uploaded_file(struct connection_info *con_info) {
-    if (!con_info->fp) {
-        return 0;
-    }
-
-    if (fflush(con_info->fp) != 0) {
-        fclose(con_info->fp);
-        con_info->fp = NULL;
-        set_error(con_info, MHD_HTTP_INTERNAL_SERVER_ERROR, "Falha ao persistir o arquivo recebido");
+static int commit_uploaded_file(struct connection_info *con_info) {
+    if (upload_stage_commit(&con_info->upload_stage,
+                            con_info->filename,
+                            sizeof(con_info->filename),
+                            con_info->response_message,
+                            sizeof(con_info->response_message)) != 0) {
+        con_info->response_status = MHD_HTTP_INTERNAL_SERVER_ERROR;
         return -1;
     }
 
-    if (fclose(con_info->fp) != 0) {
-        con_info->fp = NULL;
-        set_error(con_info, MHD_HTTP_INTERNAL_SERVER_ERROR, "Falha ao fechar o arquivo recebido");
-        return -1;
-    }
-
-    con_info->fp = NULL;
     con_info->file_saved = 1;
+    printf("✅ Arquivo salvo: %s\n", con_info->filename);
+    return 0;
+}
 
-    if (con_info->upload_in_progress) {
-        printf("✅ Arquivo salvo: %s\n", con_info->filename);
+static int seal_uploaded_stage(struct connection_info *con_info) {
+    if (upload_stage_seal(&con_info->upload_stage,
+                          con_info->response_message,
+                          sizeof(con_info->response_message)) != 0) {
+        con_info->response_status = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return -1;
     }
 
+    snprintf(con_info->filename, sizeof(con_info->filename), "%s", con_info->upload_stage.staging_path);
+    con_info->file_saved = 1;
     return 0;
 }
 
@@ -282,6 +235,25 @@ static enum MHD_Result queue_json_pair_response(struct MHD_Connection *connectio
         json_buffer_append(&payload, &length, &capacity, "\",\"token\":\"") != 0 ||
         json_buffer_append_escaped(&payload, &length, &capacity, token) != 0 ||
         json_buffer_appendf(&payload, &length, &capacity, "\",\"expires_at\":%ld}", (long)expires_at) != 0) {
+        free(payload);
+        return MHD_NO;
+    }
+
+    return queue_json_payload(connection, MHD_HTTP_OK, payload);
+}
+
+static enum MHD_Result queue_json_transfer_response(struct MHD_Connection *connection,
+                                                    const char *message,
+                                                    const char *job_id) {
+    char *payload = NULL;
+    size_t length = 0;
+    size_t capacity = 0;
+
+    if (json_buffer_append(&payload, &length, &capacity, "{\"status\":\"ok\",\"message\":\"") != 0 ||
+        json_buffer_append_escaped(&payload, &length, &capacity, message) != 0 ||
+        json_buffer_append(&payload, &length, &capacity, "\",\"job_id\":\"") != 0 ||
+        json_buffer_append_escaped(&payload, &length, &capacity, job_id) != 0 ||
+        json_buffer_append(&payload, &length, &capacity, "\"}") != 0) {
         free(payload);
         return MHD_NO;
     }
@@ -415,36 +387,30 @@ static enum MHD_Result iterate_post(void *coninfo_cls,
     }
 
     if (strcmp(key, "file") == 0) {
-        if (filename && !con_info->fp) {
-            char safe_filename[128];
-            time_t now = time(NULL);
-
-            ensure_downloads_dir();
-            sanitize_filename(filename, safe_filename, sizeof(safe_filename));
-            snprintf(con_info->filename, sizeof(con_info->filename), "%s/%ld_%s", DOWNLOADS_DIR, (long)now, safe_filename);
-
-            con_info->fp = fopen(con_info->filename, "wb");
-            if (!con_info->fp) {
-                set_error(con_info, MHD_HTTP_INTERNAL_SERVER_ERROR, "Nao foi possivel criar o arquivo recebido");
+        if (filename && !con_info->upload_stage.fp && !con_info->upload_stage.sealed) {
+            if (upload_stage_open(&con_info->upload_stage,
+                                  filename,
+                                  con_info->response_message,
+                                  sizeof(con_info->response_message)) != 0) {
+                con_info->response_status = MHD_HTTP_INTERNAL_SERVER_ERROR;
                 return MHD_YES;
             }
 
-            printf("📥 Recebendo: %s\n", safe_filename);
+            printf("📥 Recebendo: %s\n", con_info->upload_stage.original_name);
             con_info->upload_in_progress = 1;
         }
 
-        if (con_info->fp && size > 0) {
-            if (con_info->bytes_received + size > MAX_FILE_SIZE) {
-                set_error(con_info, MHD_HTTP_CONTENT_TOO_LARGE, "Arquivo excede o limite de 100 MB");
+        if ((con_info->upload_stage.fp || con_info->upload_stage.sealed) && size > 0) {
+            if (upload_stage_write(&con_info->upload_stage,
+                                   data,
+                                   size,
+                                   MAX_FILE_SIZE,
+                                   con_info->response_message,
+                                   sizeof(con_info->response_message)) != 0) {
+                con_info->response_status =
+                    strstr(con_info->response_message, "limite") ? MHD_HTTP_CONTENT_TOO_LARGE : MHD_HTTP_INTERNAL_SERVER_ERROR;
                 return MHD_YES;
             }
-
-            if (fwrite(data, 1, size, con_info->fp) != size) {
-                set_error(con_info, MHD_HTTP_INTERNAL_SERVER_ERROR, "Falha ao gravar o arquivo recebido");
-                return MHD_YES;
-            }
-
-            con_info->bytes_received += size;
         }
     } else if (strcmp(key, "target_ip") == 0) {
         copy_form_value(con_info->target_ip, sizeof(con_info->target_ip), data, off, size);
@@ -483,12 +449,8 @@ static void request_completed(void *cls,
         MHD_destroy_post_processor(con_info->postprocessor);
     }
 
-    if (con_info->fp) {
-        fclose(con_info->fp);
-    }
-
-    if (!con_info->file_saved && con_info->filename[0] != '\0') {
-        unlink(con_info->filename);
+    if (!con_info->file_saved) {
+        upload_stage_abort(&con_info->upload_stage);
     }
 
     free(con_info);
@@ -674,6 +636,35 @@ static enum MHD_Result answer_to_connection(void *cls,
         return queue_json_pair_response(connection, "Peer pareado com sucesso", token, expires_at);
     }
 
+    if (strcmp(url, "/api/transfers") == 0 && strcmp(method, "GET") == 0) {
+        char *json = NULL;
+
+        if (authorize_ui_request(connection, con_info, "transfer_status", 30) != 0) {
+            return queue_json_status_message(connection, (unsigned int)con_info->response_status, "error", con_info->response_message);
+        }
+
+        if (transfer_status_list_json(&json) != 0) {
+            return queue_json_status_message(connection, MHD_HTTP_INTERNAL_SERVER_ERROR, "error", "Nao foi possivel consultar a fila de transferencias");
+        }
+
+        return queue_json_payload(connection, MHD_HTTP_OK, json);
+    }
+
+    if (strncmp(url, "/api/transfers/", strlen("/api/transfers/")) == 0 && strcmp(method, "GET") == 0) {
+        char *json = NULL;
+        const char *job_id = url + strlen("/api/transfers/");
+
+        if (authorize_ui_request(connection, con_info, "transfer_status", 30) != 0) {
+            return queue_json_status_message(connection, (unsigned int)con_info->response_status, "error", con_info->response_message);
+        }
+
+        if (transfer_status_get(job_id, &json) != 0) {
+            return queue_json_status_message(connection, MHD_HTTP_NOT_FOUND, "error", "Transferencia nao encontrada");
+        }
+
+        return queue_json_payload(connection, MHD_HTTP_OK, json);
+    }
+
     if (strcmp(url, "/upload") == 0 && strcmp(method, "POST") == 0) {
         if (*upload_data_size != 0) {
             if (authorize_upload_request(connection, con_info) != 0) {
@@ -699,7 +690,7 @@ static enum MHD_Result answer_to_connection(void *cls,
             return queue_json_status_message(connection, MHD_HTTP_BAD_REQUEST, "error", "Nenhum arquivo foi enviado");
         }
 
-        if (finalize_uploaded_file(con_info) != 0) {
+        if (commit_uploaded_file(con_info) != 0) {
             return queue_json_status_message(connection, (unsigned int)con_info->response_status, "error", con_info->response_message);
         }
 
@@ -803,6 +794,7 @@ static enum MHD_Result answer_to_connection(void *cls,
         }
 
         {
+            char job_id[65];
             char pair_token[65];
             uint16_t target_port = 0;
 
@@ -810,20 +802,18 @@ static enum MHD_Result answer_to_connection(void *cls,
                 return queue_json_status_message(connection, (unsigned int)con_info->response_status, "error", con_info->response_message);
             }
 
-            if (finalize_uploaded_file(con_info) != 0) {
+            if (seal_uploaded_stage(con_info) != 0) {
                 return queue_json_status_message(connection, (unsigned int)con_info->response_status, "error", con_info->response_message);
             }
 
-            printf("📤 Encaminhando %s para %s:%u\n", con_info->filename, con_info->target_ip, (unsigned int)target_port);
-            if (transfer_send_file(con_info->filename, con_info->target_ip, (int)target_port, pair_token, NULL) != 0) {
-                return queue_json_status_message(connection,
-                                                 MHD_HTTP_BAD_GATEWAY,
-                                                 "error",
-                                                 "Falha ao enviar o arquivo para o dispositivo remoto");
+            if (transfer_enqueue(con_info->filename, con_info->target_ip, target_port, pair_token, job_id, sizeof(job_id)) != 0) {
+                con_info->file_saved = 0;
+                upload_stage_abort(&con_info->upload_stage);
+                return queue_json_status_message(connection, MHD_HTTP_SERVICE_UNAVAILABLE, "error", "Fila de transferencia indisponivel");
             }
-        }
 
-        return queue_json_status_message(connection, MHD_HTTP_OK, "ok", "Arquivo enviado com sucesso");
+            return queue_json_transfer_response(connection, "Transferencia enfileirada com sucesso", job_id);
+        }
     }
 
     response = MHD_create_response_from_buffer(strlen("404 Not Found"), (void *)"404 Not Found", MHD_RESPMEM_PERSISTENT);
