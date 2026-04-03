@@ -158,6 +158,7 @@ int main(void) {
     if (auth_get_admin_code(admin_code, sizeof(admin_code)) == 0) {
         printf("🔐 Codigo administrativo local: %s\n\n", admin_code);
     }
+    fflush(stdout);
 
     if (discovery_init(hostname, PORT) < 0) {
         printf("⚠️  Descoberta mDNS indisponivel; iniciando apenas o servidor web\n");

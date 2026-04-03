@@ -30,7 +30,7 @@ cleanup() {
 trap cleanup EXIT
 
 cd "${workdir}"
-stdbuf -oL -eL "${binary_path}" >"${log_file}" 2>&1 &
+"${binary_path}" >"${log_file}" 2>&1 &
 server_pid="$!"
 
 admin_code=""
