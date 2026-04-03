@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 11)
 # Procurar as bibliotecas
 find_package(PkgConfig REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(AVAHI REQUIRED avahi-client)
 pkg_check_modules(MHD REQUIRED libmicrohttpd)
@@ -17,6 +18,8 @@ include_directories(${CMAKE_SOURCE_DIR}/src)
 
 # Arquivos fonte
 set(SOURCES
+    src/auth.c
+    src/crypto.c
     src/json_utils.c
     src/main.c
     src/peer_registry.c
@@ -30,4 +33,4 @@ set(SOURCES
 add_executable(localdrop ${SOURCES})
 
 # Linkar as bibliotecas
-target_link_libraries(localdrop ${AVAHI_LIBRARIES} ${MHD_LIBRARIES} ${QRENCODE_LIBRARIES} ${CURL_LIBRARIES} Threads::Threads)
+target_link_libraries(localdrop ${AVAHI_LIBRARIES} ${MHD_LIBRARIES} ${QRENCODE_LIBRARIES} ${CURL_LIBRARIES} OpenSSL::Crypto Threads::Threads)

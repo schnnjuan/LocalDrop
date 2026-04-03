@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "auth.h"
 #include "discovery.h"
 #include "peer_registry.h"
 #include "server.h"
@@ -94,6 +95,7 @@ int main(void) {
     char *ip = get_local_ip();
     char url[256];
     char hostname[256];
+    char admin_code[16];
     int discovery_enabled = 0;
 
     signal(SIGINT, sigint_handler);
@@ -109,8 +111,16 @@ int main(void) {
         return 1;
     }
 
+    if (auth_init() != 0) {
+        printf("❌ Erro ao inicializar autenticacao local\n");
+        transfer_global_cleanup();
+        peer_registry_cleanup();
+        return 1;
+    }
+
     if (!ip) {
         printf("❌ Não foi possível obter o IP local\n");
+        auth_cleanup();
         transfer_global_cleanup();
         peer_registry_cleanup();
         return 1;
@@ -124,6 +134,9 @@ int main(void) {
     printf("📱 Escaneie o QR code:\n");
     print_qrcode(url);
     printf("💡 Ou acesse: %s\n\n", url);
+    if (auth_get_admin_code(admin_code, sizeof(admin_code)) == 0) {
+        printf("🔐 Codigo administrativo local: %s\n\n", admin_code);
+    }
 
     if (discovery_init(hostname, PORT) < 0) {
         printf("⚠️  Descoberta mDNS indisponivel; iniciando apenas o servidor web\n");
@@ -137,6 +150,7 @@ int main(void) {
         if (discovery_enabled) {
             discovery_cleanup();
         }
+        auth_cleanup();
         transfer_global_cleanup();
         peer_registry_cleanup();
         return 1;
@@ -157,6 +171,7 @@ int main(void) {
     if (discovery_enabled) {
         discovery_cleanup();
     }
+    auth_cleanup();
     transfer_global_cleanup();
     peer_registry_cleanup();
     return 0;
