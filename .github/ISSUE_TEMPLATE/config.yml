@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support
+    url: https://github.com/schnnjuan/LocalDrop/blob/main/SUPPORT.md
+    about: Read the support guide before opening a new request.
+  - name: Security policy
+    url: https://github.com/schnnjuan/LocalDrop/blob/main/SECURITY.md
+    about: Please review the security policy for sensitive reports.
