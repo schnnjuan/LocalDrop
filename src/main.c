@@ -95,7 +95,7 @@ static void print_qrcode(const char *text) {
 int main(void) {
     struct MHD_Daemon *daemon = NULL;
     char *ip = get_local_ip();
-    char url[256];
+    char url[1200];
     char hostname[256];
     char admin_code[16];
     int discovery_enabled = 0;

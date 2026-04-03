@@ -75,7 +75,7 @@ static void copy_form_value(char *dest, size_t dest_size, const char *data, uint
 static int get_client_ip(struct MHD_Connection *connection, char *dest, size_t dest_size) {
     const union MHD_ConnectionInfo *connection_info;
     const struct sockaddr *address;
-    void *source = NULL;
+    const void *source = NULL;
 
     if (!connection || !dest || dest_size == 0) {
         return -1;
